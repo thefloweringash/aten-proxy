@@ -315,9 +315,6 @@ void AtenServer::doWriter() {
 
 			case WriteAction::Ping:
 				break;
-
-			default:
-				abort();
 			}
 		}
 	}
