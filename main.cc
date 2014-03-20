@@ -58,8 +58,15 @@ struct AddrinfoDeleter {
 class Connection {
 	unique_fd mSocket;
 
-	char *mReadBuffer;
-	size_t mReadBufferLen;
+	// convenience buffer
+	char *mTempBuffer;
+	size_t mTempBufferLen;
+
+	char *mRecvBuffer;
+	size_t mRecvBufferLen;
+
+	char *mCursor;
+	size_t mDataLen;
 
 	static std::unique_ptr<addrinfo, AddrinfoDeleter>
 	getaddrinfo_sp(const char *host, const char *service,
@@ -102,7 +109,7 @@ class Connection {
 				perror("socket");
 				continue;
 			}
-				
+
 			int err = connect(s, x->ai_addr, x->ai_addrlen);
 			if (err) {
 				warn("connect to %s", showAddress(x->ai_addr));
@@ -119,11 +126,26 @@ public:
 	Connection(const char *host, const char *service)
 		: mSocket(connectSocket(host, service))
 	{
-		mReadBufferLen = 1024;
-		mReadBuffer = (char*) malloc(mReadBufferLen);
-		if (!mReadBuffer)
+		mTempBufferLen = 1024;
+		mTempBuffer = (char*) malloc(mTempBufferLen);
+		if (!mTempBuffer)
 			abort();
+
+		mRecvBufferLen = 1024;
+		mRecvBuffer = (char*) malloc(mRecvBufferLen);
+		if (!mRecvBuffer)
+			abort();
+
+		mCursor = mRecvBuffer;
+		mDataLen = 0;
+		printf("connection constructor says hi\n");
 	}
+	~Connection() {
+		// TODO FIXME: better to be unique_ptr?
+		free(mTempBuffer);
+		free(mRecvBuffer);
+	}
+
 	void writeBytes(const char *buf, size_t len);
 	void writeString(const char *buf) {
 		writeBytes(buf, strlen(buf));
@@ -154,8 +176,8 @@ struct WriteAction {
 			rfbKeySym keySym;
 		} keyEvent;
 		struct {
-			uint8_t incremental; 
-			uint8_t x; uint8_t y; 
+			uint8_t incremental;
+			uint8_t x; uint8_t y;
 			uint8_t w; uint8_t h;
 		} updateFramebuffer;
 	};
@@ -167,8 +189,8 @@ struct WriteAction {
 		e.keyEvent.down = down;
 		return e;
 	}
-	static WriteAction makeUpdateFramebuffer(uint8_t incremental, uint8_t x, uint8_t y, 
-											 uint8_t w, uint8_t h) 
+	static WriteAction makeUpdateFramebuffer(uint8_t incremental, uint8_t x, uint8_t y,
+											 uint8_t w, uint8_t h)
 	{
 		WriteAction e;
 		e.type = UpdateFramebuffer;
@@ -196,7 +218,7 @@ struct RFBUpdate {
 			int height;
 		} setFramebuffer;
 		struct {
-			int x1; int y1; 
+			int x1; int y1;
 			int x2; int y2;
 		} addDirtyRect;
 		struct {
@@ -218,7 +240,7 @@ private:
 
 	void doWriter();
 	void doReader();
-	   
+
 	void keyEventHandler(rfbBool down, rfbKeySym keySym, rfbClientPtr cl);
 
 	void handleFrameUpdate();
@@ -232,6 +254,7 @@ private:
 	char *mFrameBuffer;
 	int fbWidth, fbHeight;
 	bool mSetServerName;
+	bool mScreenOff;
 
 	// upstream side
 	std::unique_ptr<Connection> mConnection;
@@ -273,7 +296,7 @@ void AtenServer::doWriter() {
 	// events, coalesce pointer events(possible with ikvm?), event
 	// boundaries for re-establishing connections (char**), event
 	// introspection on connection reset.
-	
+
 	try {
 		while (!mTerminating) {
 			WriteAction ev = nextWriteAction();
@@ -339,29 +362,41 @@ void Connection::writeBytes(const char *buf, size_t len) {
 			off += n;
 		}
 	}
-	
+
 }
 
 char* Connection::readBytes(size_t len) {
-	if (mReadBufferLen < len) {
-		while (mReadBufferLen < len)
-			mReadBufferLen <<= 1;
-		mReadBuffer = reinterpret_cast<char*>(
-			realloc(mReadBuffer, mReadBufferLen));
-		if (!mReadBuffer)
+	if (mTempBufferLen < len) {
+		while (mTempBufferLen < len)
+			mTempBufferLen <<= 1;
+		mTempBuffer = reinterpret_cast<char*>(
+			realloc(mTempBuffer, mTempBufferLen));
+		if (!mTempBuffer)
 			abort();
 	}
-	return readBytes(mReadBuffer, len);
+	return readBytes(mTempBuffer, len);
 }
 
 char *Connection::readBytes(char *buf, size_t len) {
 	size_t off = 0;
-	while (off < len) {
+
+	// take from buffer
+	if (mDataLen) {
+		size_t take = std::min(mDataLen, len);
+		memcpy(buf, mCursor, take);
+
+		mDataLen -= take;
+		mCursor += take;
+		off += take;
+	}
+
+	// take from socket, ignoring buffer if > buffer size
+	while (len - off > mRecvBufferLen) {
 		ssize_t n = recv(mSocket, buf + off, len - off, 0);
 		if (n < 0) {
 			if (errno != EINTR) {
 				perror("recv");
-				abort();
+				throw std::runtime_error("read failed");
 			}
 		}
 		else if (n == 0) {
@@ -371,10 +406,57 @@ char *Connection::readBytes(char *buf, size_t len) {
 		else {
 			off += n;
 		}
-		// printf("readBytes (%zu/%zu\n", off, len);
+	}
+
+	// take from socket to buffer, keeping leftovers in the buffer
+	if (len - off > 0) {
+		// buffer is empty, reset and fill buffer to at least len -
+		// off
+		mCursor = mRecvBuffer;
+		mDataLen = 0;
+		while (len - off > mDataLen) {
+			ssize_t n = recv(mSocket, mRecvBuffer + mDataLen, mRecvBufferLen - mDataLen, 0);
+			if (n < 0) {
+				if (errno != EINTR) {
+					perror("recv");
+					throw std::runtime_error("read failed");
+				}
+			}
+			else if (n == 0) {
+				// we got shut down
+				throw std::runtime_error("remote host shut us down");
+			}
+			else {
+				mDataLen += n;
+			}
+		}
+
+		size_t take = len - off;
+		memcpy(buf + off, mCursor, take);
+		mDataLen -= take;
+		mCursor += take;
+		off += take;
 	}
 
 	return buf;
+}
+
+static void copyPixels(char *out, const char *in, size_t count) {
+	// TODO FIXME: potential bottleneck
+	while (count --> 0) {
+		const uint16_t ip = (in[0] & 0xff) | (in[1] << 8);
+
+		uint8_t r = (ip >> 10) & 0x1f;
+		uint8_t g = (ip >> 5) & 0x1f;
+		uint8_t b = ip & 0x1f;
+
+		const uint16_t op = r | g << 5 | b << 10;
+
+		out[0] = op & 0xff;
+		out[1] = op >> 8;
+		out += 2;
+		in += 2;
+	}
 }
 
 void AtenServer::handleFrameUpdate() {
@@ -397,9 +479,13 @@ void AtenServer::handleFrameUpdate() {
 		int dataLen = ntohl(mConnection->readRaw<uint32_t>());
 		(void) dataLen;
 		// printf("update[%d]: (%dx%d)+%d+%d len=%d\n",
-		// 	   update, width, height, x, y, dataLen);
+		//	   update, width, height, x, y, dataLen);
 
 		if (width == uint16_t(-640) && height == uint16_t(-480)) {
+			if (!mScreenOff) {
+				mScreenOff = true;
+				printf("screen disappeared, showing error\n");
+			}
 			// screen is disabled
 			memset(fb, 0xf0, fbWidth * fbHeight * 2);
 			RFBUpdate u;
@@ -411,6 +497,10 @@ void AtenServer::handleFrameUpdate() {
 			sendRFBUpdate(u);
 		}
 		else {
+			if (mScreenOff) {
+				printf("screen back again\n");
+				mScreenOff = false;
+			}
 			if (width != fbWidth || height != fbHeight) {
 				printf("framebuffer resizing!  %dx%d  -> %dx%d\n",
 					   fbWidth, fbHeight, width, height);
@@ -429,83 +519,87 @@ void AtenServer::handleFrameUpdate() {
 				sendRFBUpdate(u);
 			}
 		}
-				
-		int type = mConnection->readRaw<uint8_t>();
-		(void) mConnection->readBytes(1);
-		int segments = ntohl(mConnection->readRaw<uint32_t>());
-		int totalLen = ntohl(mConnection->readRaw<uint32_t>());
-		switch (type) {
-		case 0: // subrects
-			{
-				bool haveRect = false;
+
+		if (!mScreenOff) {
+			int type = mConnection->readRaw<uint8_t>();
+			(void) mConnection->readBytes(1);
+			int segments = ntohl(mConnection->readRaw<uint32_t>());
+			int totalLen = ntohl(mConnection->readRaw<uint32_t>());
+			switch (type) {
+			case 0: // subrects
+				{
+					bool haveRect = false;
+					RFBUpdate u;
+					u.type = RFBUpdate::AddDirtyRect;
+
+					const int bsz = 16;
+					for (int s = 0; s < segments; s++) {
+						(void) mConnection->readBytes(4);
+						int y = mConnection->readRaw<uint8_t>();
+						int x = mConnection->readRaw<uint8_t>();
+						const char *data = mConnection->readBytes(2 * bsz * bsz);
+
+						char *out = fb + 2 * (y * bsz * fbWidth + x * bsz);
+						char *end = fb + 2 * (fbHeight * fbWidth);
+						for (int line = 0; line < bsz; line++) {
+							int size = bsz * 2;
+							if (out > end)
+								break;
+							if (out + size > end)
+								size = end - out;
+							copyPixels(out, data, size >> 1);
+							out += 2 * fbWidth;
+							data += size;
+						}
+
+						{
+							int x1 = x * bsz,
+								y1 = y * bsz,
+								x2 = (x + 1) * bsz,
+								y2 = (y + 1) * bsz;
+							if (!haveRect) {
+								u.addDirtyRect.x1 = x1;
+								u.addDirtyRect.y1 = y1;
+								u.addDirtyRect.x2 = x2;
+								u.addDirtyRect.y2 = y2;
+								haveRect = true;
+							}
+							else {
+								u.addDirtyRect.x1 = std::min(u.addDirtyRect.x1, x1);
+								u.addDirtyRect.y1 = std::min(u.addDirtyRect.y1, y1);
+								u.addDirtyRect.x2 = std::max(u.addDirtyRect.x2, x2);
+								u.addDirtyRect.y2 = std::max(u.addDirtyRect.y2, y2);
+							}
+						}
+					}
+					if (haveRect) {
+						// printf("subrect update merged to: %dx%d+%d+%d\n",
+						//	   u.addDirtyRect.x2 - u.addDirtyRect.x1,
+						//	   u.addDirtyRect.y2 - u.addDirtyRect.y1,
+						//	   u.addDirtyRect.x1,
+						//	   u.addDirtyRect.y1);
+						sendRFBUpdate(u);
+					}
+				}
+				break;
+			case 1:  // entire frame
+				const char *data = mConnection->readBytes(totalLen - 10);
+				copyPixels(fb, data, (totalLen - 10) >> 1);
+
 				RFBUpdate u;
 				u.type = RFBUpdate::AddDirtyRect;
-						
-				const int bsz = 16;
-				for (int s = 0; s < segments; s++) {
-
-					(void) mConnection->readBytes(4);
-					int y = mConnection->readRaw<uint8_t>();
-					int x = mConnection->readRaw<uint8_t>();
-					const char *data = mConnection->readBytes(2 * bsz * bsz);
-							
-					char *out = fb + 2 * (y * bsz * fbWidth + x * bsz);
-					char *end = fb + 2 * (fbHeight * fbWidth);
-					for (int line = 0; line < bsz; line++) {
-						int size = bsz * 2;
-						if (out > end)
-							break;
-						if (out + size > end)
-							size = end - out;
-						memcpy(out, data, size);
-						out += 2 * fbWidth;
-						data += size;
-					}
-
-					{
-						int x1 = x * bsz,
-							y1 = y * bsz,
-							x2 = (x + 1) * bsz,
-							y2 = (y + 1) * bsz;
-						if (!haveRect) {
-							u.addDirtyRect.x1 = x1;
-							u.addDirtyRect.y1 = y1;
-							u.addDirtyRect.x2 = x2;
-							u.addDirtyRect.y2 = y2;
-							haveRect = true;
-						}
-						else {
-							u.addDirtyRect.x1 = std::min(u.addDirtyRect.x1, x1);
-							u.addDirtyRect.y1 = std::min(u.addDirtyRect.y1, y1);
-							u.addDirtyRect.x2 = std::max(u.addDirtyRect.x2, x2);
-							u.addDirtyRect.y2 = std::max(u.addDirtyRect.y2, y2);
-						}
-					}
-				}
-				if (haveRect) {
-					printf("subrect update merged to: %dx%d+%d+%d\n",
-						   u.addDirtyRect.x2 - u.addDirtyRect.x1,
-						   u.addDirtyRect.y2 - u.addDirtyRect.y1,
-						   u.addDirtyRect.x1, 
-						   u.addDirtyRect.y1);
-					sendRFBUpdate(u);
-				}
+				u.addDirtyRect.x1 = 0;
+				u.addDirtyRect.y1 = 0;
+				u.addDirtyRect.x2 = fbWidth;
+				u.addDirtyRect.y2 = fbHeight;
+				sendRFBUpdate(u);
+				break;
 			}
-			break;
-		case 1:  // entire frame
-			mConnection->readBytes(fb, totalLen - 10);
-
-			RFBUpdate u;
-			u.type = RFBUpdate::AddDirtyRect;
-			u.addDirtyRect.x1 = 0;
-			u.addDirtyRect.y1 = 0;
-			u.addDirtyRect.x2 = fbWidth;
-			u.addDirtyRect.y2 = fbHeight;
-			sendRFBUpdate(u);
-			break;
 		}
 	}
-	sendAction(WriteAction::makeUpdateFramebuffer(1, 0, 0, 0, 0));
+	sendAction(
+		WriteAction::makeUpdateFramebuffer(mScreenOff ? 0 /* full */ : 1 /* incrememntal */,
+										   0, 0, 0, 0));
 }
 
 void AtenServer::doReader() {
@@ -538,9 +632,9 @@ void AtenServer::doReader() {
 		}
 	}
 	catch (const std::runtime_error& e) {
+		mTerminating = true;
 		sendAction(WriteAction::makePing());
 		printf("Reader terminating due to error: %s", e.what());
-		mTerminating = true;
 	}
 	printf("reader exit\n");
 }
@@ -680,7 +774,7 @@ void AtenServer::run() {
 			} auth = {{0},{0}};
 			strlcpy(auth.username, "testuser", sizeof(auth.username));
 			strlcpy(auth.password, "testpass", sizeof(auth.password));
-			
+
 			mConnection = std::unique_ptr<Connection>{
 				new Connection("localhost", "5901")};
 
