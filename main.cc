@@ -109,6 +109,7 @@ class Connection {
 				perror("socket");
 				continue;
 			}
+			auto socket_wrapper = unique_fd {s};
 
 			int err = connect(s, x->ai_addr, x->ai_addrlen);
 			if (err) {
@@ -116,7 +117,7 @@ class Connection {
 				continue;
 			}
 
-			return unique_fd{ s };
+			return socket_wrapper;
 		}
 		throw std::runtime_error("connection failed");
 	}
