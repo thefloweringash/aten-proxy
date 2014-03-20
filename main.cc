@@ -187,6 +187,7 @@ struct RFBUpdate {
 		SetFramebuffer,
 		AddDirtyRect,
 		AddDirtyRegion,
+		SetServerName,
 	} type;
 	union {
 		struct {
@@ -201,6 +202,9 @@ struct RFBUpdate {
 		struct {
 			sraRegionPtr region;
 		} addDirtyRegion;
+		struct {
+			const char *name;
+		} setServerName;
 	};
 };
 
@@ -227,6 +231,7 @@ private:
 	rfbScreenInfoPtr mRFB;
 	char *mFrameBuffer;
 	int fbWidth, fbHeight;
+	bool mSetServerName;
 
 	// upstream side
 	std::unique_ptr<Connection> mConnection;
@@ -617,6 +622,17 @@ void AtenServer::handleRFBUpdates() {
 			break;
 		}
 
+		case RFBUpdate::SetServerName: {
+			auto &p = ev.setServerName;
+			const char *oldName = mRFB->desktopName;
+			mRFB->desktopName = p.name;
+			if (mSetServerName) {
+				free((void*) oldName);
+			}
+			mSetServerName = true;
+			break;
+		}
+
 		}
 	}
 }
@@ -701,7 +717,10 @@ void AtenServer::run() {
 
 			int serverNameLen = ntohl(mConnection->readRaw<uint32_t>());
 			char *serverName = mConnection->readBytes(serverNameLen);
-			printf("servername=%s\n", serverName);
+			RFBUpdate u;
+			u.type = RFBUpdate::SetServerName;
+			u.setServerName.name = strdup(serverName);
+			sendRFBUpdate(u);
 
 			// more aten unknown
 			(void) mConnection->readBytes(12);
