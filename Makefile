@@ -12,7 +12,7 @@ CFLAGS += $(LIBEV_CFLAGS)
 LDFLAGS += $(LIBEV_LDFLAGS)
 
 OBJDIR := obj
-SRC := main.cc keymap.cc
+SRC := main.cc keymap.cc connection.cc
 OBJ := $(addprefix $(OBJDIR)/,$(SRC:.cc=.o))
 DEP := $(addprefix $(OBJDIR)/,$(SRC:.cc=.d))
 
