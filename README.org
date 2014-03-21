@@ -1,0 +1,82 @@
+#+TITLE: aten-proxy
+#+TODO: TODO INPROGRESS | DONE
+
+* Introduction
+
+aten-proxy is currently *in development* and *not yet suitable for
+end-users*.
+
+[[http://www.aten-usa.com/data/solution/IPMI/3-in-1.html][ATEN iKVM]] products are often found in remote management interfaces
+providing the keyboard, video and mouse functionality. The official
+client relies on both Java and native libraries to connect. aten-proxy
+is a [[http://libvncserver.sourceforge.net][LibVNCServer]] based translator that allows the use of any VNC
+client. Since the protocol used by the ATEN iKVM is a raw bitmap
+encoding, aten-proxy might also be used as an accelerator over longer
+distance using LibVNCServer's various compression features.
+
+aten-proxy is intended as a replacement for [[http://github.com/thefloweringash/chicken-aten-ikvm][chicken-aten-ikvm]], a
+proof-of-concept fork of the [[http://sourceforge.net/projects/chicken/][Chicken]] VNC viewer modified for use with
+ATEN iKVM products.
+
+* Building
+
+aten-proxy requires LibVNCServer, libev pkg-config, and GNU Make. Once
+they are installed, run GNU Make.
+
+If you prefer vagrant, run =vagrant up=.
+
+* License
+
+aten-proxy is licensed under the terms of the GNU General Public
+License (GPL), in order to comply with the terms of LibVNCServer. If
+the dependency on LibVNCServer is removed, the author is open to other
+licensing options.
+
+* Tasks
+** TODO Disconnection and graceful termination
+   The keyboard interface seems to no longer pass keys after
+   forcefully terminating aten-proxy.
+
+** TODO Error handling
+   Most transient errors result in reconnection, and permanent errors
+   result in =abort()=.
+
+** TODO Mouse support
+
+** TODO Lazy initialisation
+   The backend is currently connected immediately, and remains
+   connected at all times. The backend should only be connected while
+   a client is present.
+
+** TODO Authentication methods
+   Currently only LibVNCServer's built-in authentication methods are
+   available, and the upstream authentication is hardcoded.
+
+** TODO [#C] Remote media
+   No work has yet been done on the remote media protocol.
+
+** TODO Keymap support
+   The ATEN iKVM expects HID codes for key events, while the VNC
+   protocol works with X11 keysyms. This presently works by assuming
+   everything is using the same keyboard layout as the author.
+
+   For example, pressing "Shift" and "2" on my keyboard results in
+   "@". This is sent over VNC as =XK_Shift_L= and =XK_at=. aten-proxy
+   is able to pass the shift key directly (HID usage =0xE1=), but has
+   to infer how =XK_at= should be handled. [[file:keymap.cc][keymap.cc]] uses a hardcoded
+   table and guesses that with the current modifier state, it should
+   send the "2" key (HID usage =0x1f=) to enter "@".
+
+** TODO Testing
+   aten-proxy has only been tested with a Supermicro X9SCM-iiF.
+
+** TODO Performance
+   The code is written to be simple to understand and safe at the
+   expense of runtime performance. The following areas should be
+   reviewed:
+
+     * [ ] Event object lifecycle
+	 * [ ] Pixel blitting ([[file:main.cc::copyPixels][copyPixels in main.cc]])
+
+* Authors
+  * Andrew Childs <lorne@cons.org.nz>

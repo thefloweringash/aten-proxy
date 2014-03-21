@@ -1,9 +1,11 @@
 #include <cstdio>
+#include <string.h>
 #include <err.h>
 
 #include <queue>
 #include <thread>
 #include <mutex>
+#include <atomic>
 #include <condition_variable>
 
 #include <sys/socket.h>
@@ -536,14 +538,20 @@ void AtenServer::run() {
 
 	std::thread{ev_run, loop, 0}.detach();
 
+	const char *username = "testuser";
+	const char *password = "testpass";
 	while (true) {
 		try {
 			struct {
 				char username[24];
 				char password[24];
-			} auth = {{0},{0}};
-			strlcpy(auth.username, "testuser", sizeof(auth.username));
-			strlcpy(auth.password, "testpass", sizeof(auth.password));
+			} auth;
+			if (strlen(username) >= 24 || strlen(password) >= 24) {
+				printf("username and password must be 0-23 characters each\n");
+				abort();
+			}
+			strncpy(auth.username, "testuser", sizeof(auth.username));
+			strncpy(auth.password, "testpass", sizeof(auth.password));
 
 			mConnection = std::unique_ptr<Connection>{
 				new Connection("localhost", "5901")};

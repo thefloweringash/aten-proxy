@@ -1,5 +1,11 @@
-CFLAGS := -std=c++11  -Wall -Wextra -Werror -g
-LDFLAGS := -stdlib=libc++
+CFLAGS := -std=c++11  -Wall -Wextra -Werror
+LDFLAGS :=
+
+ifdef DEBUG
+CFLAGS += -g
+else
+CFLAGS += -O2
+endif
 
 LIBVNCSERVER_CFLAGS ?= $(shell pkg-config --cflags libvncserver)
 LIBVNCSERVER_LDFLAGS ?= $(shell pkg-config --libs libvncserver)
@@ -22,7 +28,7 @@ all: aten-proxy
 
 .PHONY: clean
 clean:
-	rm -f $(OBJ)
+	rm -f $(OBJ) $(DEP)
 
 aten-proxy: $(OBJ)
 	$(CXX) $(LDFLAGS) -o $@ $^
