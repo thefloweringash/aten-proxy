@@ -28,7 +28,7 @@ struct rfb_event_check {
 };
 
 struct WriteAction {
-	enum {
+	enum Type {
 		Key, UpdateFramebuffer, Ping
 	} type;
 
@@ -39,38 +39,35 @@ struct WriteAction {
 		} keyEvent;
 		struct {
 			uint8_t incremental;
-			uint8_t x; uint8_t y;
-			uint8_t w; uint8_t h;
+			uint16_t x; uint16_t y;
+			uint16_t w; uint16_t h;
 		} updateFramebuffer;
 	};
 
-	static WriteAction makeKey(rfbBool down, rfbKeySym keySym) {
-		WriteAction e;
-		e.type = Key;
-		e.keyEvent.keySym = keySym;
-		e.keyEvent.down = down;
-		return e;
+	template <Type type> struct setter;
+};
+
+template <> struct WriteAction::setter<WriteAction::Key> {
+	template <typename... Args> static void set(WriteAction& u, Args&& ...args) {
+		u.keyEvent = {args...};
 	}
-	static WriteAction makeUpdateFramebuffer(uint8_t incremental, uint8_t x, uint8_t y,
-											 uint8_t w, uint8_t h)
-	{
-		WriteAction e;
-		e.type = UpdateFramebuffer;
-		e.updateFramebuffer = {incremental, x, y, w, h};
-		return e;
+};
+template <> struct WriteAction::setter<WriteAction::UpdateFramebuffer> {
+	static void set(WriteAction& u, uint8_t i, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+		u.updateFramebuffer = {i, x, y, w ,h};
 	}
-	static WriteAction makePing() {
-		WriteAction e;
-		e.type = Ping;
-		return e;
+};
+template <> struct WriteAction::setter<WriteAction::Ping> {
+	static void set(WriteAction& u) {
+		(void) u;
 	}
 };
 
+
 struct RFBUpdate {
-	enum {
+	enum Type {
 		SetFramebuffer,
 		AddDirtyRect,
-		AddDirtyRegion,
 		SetServerName,
 	} type;
 	union {
@@ -84,14 +81,39 @@ struct RFBUpdate {
 			int x2; int y2;
 		} addDirtyRect;
 		struct {
-			sraRegionPtr region;
-		} addDirtyRegion;
-		struct {
 			const char *name;
 		} setServerName;
 	};
+
+	template <Type type> struct setter;
 };
 
+template <> struct RFBUpdate::setter<RFBUpdate::SetFramebuffer> {
+	template <typename... Args> static void set(RFBUpdate& u, Args&& ...args) {
+		u.setFramebuffer = {args...};
+	}
+};
+template <> struct RFBUpdate::setter<RFBUpdate::SetServerName> {
+	template <typename... Args> static void set(RFBUpdate& u, Args&& ...args) {
+		u.setServerName = {args...};
+	}
+};
+template <> struct RFBUpdate::setter<RFBUpdate::AddDirtyRect> {
+	template <typename... Args> static void set(RFBUpdate& u, Args&& ...args) {
+		u.addDirtyRect = {args...};
+	}
+};
+
+
+#define EV(type, tag) type, type::tag
+
+template <typename E, typename E::Type type, typename... Args>
+E makeEvent(Args&& ...args) {
+	E e;
+	e.type = type;
+	E::template setter<type>::set(e, std::forward<Args>(args)...);
+	return e;
+}
 class AtenServer {
 public:
 	AtenServer(int *argc, char **argv);
@@ -114,7 +136,7 @@ private:
 	// rfb side
 	rfbScreenInfoPtr mRFB;
 	char *mFrameBuffer;
-	int fbWidth, fbHeight;
+	int mFBWidth, mFBHeight;
 	bool mSetServerName;
 	bool mScreenOff;
 
@@ -188,6 +210,7 @@ void AtenServer::doWriter() {
 			}
 
 			case WriteAction::UpdateFramebuffer: {
+				// TODO FIXME: byte ordering of x, y, width and height
 				auto& p = ev.updateFramebuffer;
 				struct {
 					uint8_t messageType;
@@ -257,36 +280,25 @@ void AtenServer::handleFrameUpdate() {
 				printf("screen disappeared, showing error\n");
 			}
 			// screen is disabled
-			memset(fb, 0xf0, fbWidth * fbHeight * 2);
-			RFBUpdate u;
-			u.type = RFBUpdate::AddDirtyRect;
-			u.addDirtyRect.x1 = 0;
-			u.addDirtyRect.y1 = 0;
-			u.addDirtyRect.x2 = fbWidth;
-			u.addDirtyRect.y2 = fbHeight;
-			sendRFBUpdate(u);
+			memset(fb, 0xf0, mFBWidth * mFBHeight * 2);
+			sendRFBUpdate(makeEvent<EV(RFBUpdate, AddDirtyRect)>(0, 0, mFBWidth, mFBHeight));
 		}
 		else {
 			if (mScreenOff) {
 				printf("screen back again\n");
 				mScreenOff = false;
 			}
-			if (width != fbWidth || height != fbHeight) {
+			if (width != mFBWidth || height != mFBHeight) {
 				printf("framebuffer resizing!  %dx%d  -> %dx%d\n",
-					   fbWidth, fbHeight, width, height);
+					   mFBWidth, mFBHeight, width, height);
 				fb = mFrameBuffer =
 					reinterpret_cast<char*>(malloc(width * height * 2));
 				if (!fb) abort();
 
-				fbWidth = width;
-				fbHeight = height;
+				mFBWidth = width;
+				mFBHeight = height;
 
-				RFBUpdate u;
-				u.type = RFBUpdate::SetFramebuffer;
-				u.setFramebuffer.width = width;
-				u.setFramebuffer.height = height;
-				u.setFramebuffer.newFramebuffer = fb;
-				sendRFBUpdate(u);
+				sendRFBUpdate(makeEvent<EV(RFBUpdate, SetFramebuffer)>(fb, width, height));
 			}
 		}
 
@@ -309,8 +321,8 @@ void AtenServer::handleFrameUpdate() {
 						int x = mConnection->readRaw<uint8_t>();
 						const char *data = mConnection->readBytes(2 * bsz * bsz);
 
-						char *out = fb + 2 * (y * bsz * fbWidth + x * bsz);
-						char *end = fb + 2 * (fbHeight * fbWidth);
+						char *out = fb + 2 * (y * bsz * mFBWidth + x * bsz);
+						char *end = fb + 2 * (mFBHeight * mFBWidth);
 						for (int line = 0; line < bsz; line++) {
 							int size = bsz * 2;
 							if (out > end)
@@ -318,7 +330,7 @@ void AtenServer::handleFrameUpdate() {
 							if (out + size > end)
 								size = end - out;
 							copyPixels(out, data, size >> 1);
-							out += 2 * fbWidth;
+							out += 2 * mFBWidth;
 							data += size;
 						}
 
@@ -356,20 +368,15 @@ void AtenServer::handleFrameUpdate() {
 				const char *data = mConnection->readBytes(totalLen - 10);
 				copyPixels(fb, data, (totalLen - 10) >> 1);
 
-				RFBUpdate u;
-				u.type = RFBUpdate::AddDirtyRect;
-				u.addDirtyRect.x1 = 0;
-				u.addDirtyRect.y1 = 0;
-				u.addDirtyRect.x2 = fbWidth;
-				u.addDirtyRect.y2 = fbHeight;
-				sendRFBUpdate(u);
+				sendRFBUpdate(makeEvent<EV(RFBUpdate, AddDirtyRect)>(0, 0, mFBWidth, mFBHeight));
 				break;
 			}
 		}
 	}
 	sendAction(
-		WriteAction::makeUpdateFramebuffer(mScreenOff ? 0 /* full */ : 1 /* incrememntal */,
-										   0, 0, 0, 0));
+		makeEvent<EV(WriteAction, UpdateFramebuffer)>(
+			mScreenOff ? 0 /* full */ : 1 /* incrememntal */,
+			0, 0, 0, 0));
 }
 
 void AtenServer::doReader() {
@@ -403,7 +410,7 @@ void AtenServer::doReader() {
 	}
 	catch (const std::runtime_error& e) {
 		mTerminating = true;
-		sendAction(WriteAction::makePing());
+		sendAction(makeEvent<EV(WriteAction,Ping)>());
 		printf("Reader terminating due to error: %s", e.what());
 	}
 	printf("reader exit\n");
@@ -424,16 +431,16 @@ void AtenServer::sendRFBUpdate(const RFBUpdate& u) {
 
 void AtenServer::keyEventHandler(rfbBool down, rfbKeySym keySym, rfbClientPtr cl) {
 	(void) cl;
-	sendAction(WriteAction::makeKey(down, keySym));
+	sendAction(makeEvent<EV(WriteAction,Key)>(down, keySym));
 }
 
 
 AtenServer::AtenServer(int *argc, char **argv) {
-	fbWidth = 640;
-	fbHeight = 480;
-	mRFB = rfbGetScreen(argc, argv, fbWidth, fbHeight, 5, 3, 2);
-	mFrameBuffer = reinterpret_cast<char*>(malloc(fbWidth * fbHeight * 2));
-	memset(mFrameBuffer, 0, fbWidth * fbHeight * 2);
+	mFBWidth = 640;
+	mFBHeight = 480;
+	mRFB = rfbGetScreen(argc, argv, mFBWidth, mFBHeight, 5, 3, 2);
+	mFrameBuffer = reinterpret_cast<char*>(malloc(mFBWidth * mFBHeight * 2));
+	memset(mFrameBuffer, 0, mFBWidth * mFBHeight * 2);
 
 	mRFB->frameBuffer = mFrameBuffer;
 	mRFB->kbdAddEvent = [](rfbBool down, rfbKeySym keySym, rfbClientPtr cl){
@@ -473,13 +480,6 @@ void AtenServer::handleRFBUpdates() {
 		case RFBUpdate::AddDirtyRect: {
 			auto &p = ev.addDirtyRect;
 			rfbMarkRectAsModified(mRFB, p.x1, p.y1, p.x2, p.y2);
-			break;
-		}
-
-		case RFBUpdate::AddDirtyRegion: {
-			auto &p = ev.addDirtyRegion;
-			rfbMarkRegionAsModified(mRFB, p.region);
-			// sraRgnDestroy(p.region);
 			break;
 		}
 
@@ -587,7 +587,7 @@ void AtenServer::run() {
 			(void) mConnection->readBytes(12);
 
 			// initial screen update
-			sendAction(WriteAction::makeUpdateFramebuffer(0, 0, 0, 0, 0));
+			sendAction(makeEvent<EV(WriteAction, UpdateFramebuffer)>(0, 0, 0, 0, 0));
 
 			mWriterThread = std::thread{[this]{doWriter();}};
 			mReaderThread = std::thread{[this]{doReader();}};
