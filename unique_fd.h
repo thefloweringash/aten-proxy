@@ -2,6 +2,7 @@
 #ifndef _UNIQUE_FD_H_
 #define _UNIQUE_FD_H_
 
+#include <unistd.h>
 #include <algorithm>
 
 // Adapted from http://stackoverflow.com/a/15762682
