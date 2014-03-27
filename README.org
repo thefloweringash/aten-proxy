@@ -76,7 +76,7 @@ licensing options.
    reviewed:
 
      * [ ] Event object lifecycle
-	 * [ ] Pixel blitting ([[file:main.cc::copyPixels][copyPixels in main.cc]])
+     * [ ] Pixel blitting ([[file:main.cc::copyPixels][copyPixels in main.cc]])
 
 * Authors
   * Andrew Childs <lorne@cons.org.nz>
