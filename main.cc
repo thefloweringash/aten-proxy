@@ -199,9 +199,9 @@ void AtenServer::doWriter() {
 				} __attribute__((packed)) req;
 				memset(&req, 0, sizeof(req));
 				uint8_t usage = keymap_usageForKeysym(p.keySym);
-				printf("key %s keysym=%x usage=%x\n",
-					   p.down ? "down" : "up",
-					   p.keySym, usage);
+				// printf("key %s keysym=%x usage=%x\n",
+				// 	   p.down ? "down" : "up",
+				// 	   p.keySym, usage);
 				if (usage) {
 					req.messageType = 4;
 					req.down = p.down;
@@ -556,9 +556,13 @@ void AtenServer::run() {
 			mConnection = std::unique_ptr<Connection>{
 				new Connection("localhost", "5901")};
 
+			fprintf(stderr, "Connected\n");
+
 			// handshake
 			mConnection->readBytes(strlen("RFB 003.008\n"));
 			mConnection->writeString("RFB 003.008\n");
+
+			fprintf(stderr, "Completed handshake\n");
 
 			// security type
 			int nSecurity = mConnection->readRaw<uint8_t>();
@@ -570,6 +574,8 @@ void AtenServer::run() {
 
 			// unknown reply from aten, 24 bytes
 			(void) mConnection->readBytes(24);
+
+			fprintf(stderr, "Negotiated security type\n");
 
 			// auth
 			mConnection->writeBytes((char*) &auth, sizeof(auth));
@@ -596,6 +602,8 @@ void AtenServer::run() {
 
 			// initial screen update
 			sendAction(makeEvent<EV(WriteAction, UpdateFramebuffer)>(0, 0, 0, 0, 0));
+
+			fprintf(stderr, "Sent request for initial update\n");
 
 			mWriterThread = std::thread{[this]{doWriter();}};
 			mReaderThread = std::thread{[this]{doReader();}};

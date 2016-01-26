@@ -61,7 +61,6 @@ public:
 
 		mCursor = mRecvBuffer;
 		mDataLen = 0;
-		printf("connection constructor says hi\n");
 	}
 	~Connection() {
 		// TODO FIXME: better to be unique_ptr?
