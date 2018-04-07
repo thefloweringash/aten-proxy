@@ -4,7 +4,7 @@ stdenv.mkDerivation {
   name = "aten-proxy";
   version = "0.0.1";
 
-  src = ./.;
+  src = stdenv.lib.cleanSource ./.;
 
   nativeBuildInputs = [ pkgconfig ];
   buildInputs = [ libev libvncserver ];
