@@ -1,4 +1,4 @@
-{ stdenv, libev, libvncserver, pkgconfig }:
+{ stdenv, libev, libvncserver, cmake, pkgconfig }:
 
 stdenv.mkDerivation {
   name = "aten-proxy";
@@ -6,7 +6,7 @@ stdenv.mkDerivation {
 
   src = stdenv.lib.cleanSource ./.;
 
-  nativeBuildInputs = [ pkgconfig ];
+  nativeBuildInputs = [ cmake pkgconfig ];
   buildInputs = [ libev libvncserver ];
 
   installPhase = ''

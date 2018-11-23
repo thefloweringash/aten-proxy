@@ -20,10 +20,15 @@ ATEN iKVM products.
 
 * Building
 
-aten-proxy requires LibVNCServer, libev pkg-config, and GNU Make. Once
-they are installed, run GNU Make.
+aten-proxy requires LibVNCServer, libev, pkg-config, and CMake. Once
+they are installed, run CMake.
 
-If you prefer vagrant, run =vagrant up=.
+#+BEGIN_SRC sh
+  mkdir build && cd build
+  cmake .. && make
+#+END_SRC
+
+This repository can also be built with [[https://nixos.org/nixpkgs/][Nix]].
 
 * License
 
