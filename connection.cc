@@ -64,7 +64,7 @@ unique_fd connectSocket(const char *host, const char *service) {
 	throw std::runtime_error("connection failed");
 }
 
-};
+}
 
 void Connection::writeBytes(const char *buf, size_t len) {
 	size_t off = 0;

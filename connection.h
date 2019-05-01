@@ -30,7 +30,7 @@ const char *showAddress(const struct sockaddr *s);
 
 unique_fd connectSocket(const char *host, const char *service);
 
-};
+}
 
 class Connection {
 	unique_fd mSocket;
