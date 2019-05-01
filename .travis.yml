@@ -1,1 +1,16 @@
-language: nix
+matrix:
+  include:
+    - language: nix
+    - language: c
+      os: linux
+      dist: xenial
+      addons:
+        apt:
+          packages:
+            - cmake
+            - ninja-build
+            - libev-dev
+            - libvncserver-dev
+      script:
+        - mkdir -p build && cd build
+        - cmake .. -G Ninja && ninja
