@@ -9,6 +9,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic -Wextra")
 find_package(PkgConfig)
 find_package(Libev REQUIRED)
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 pkg_check_modules(libvncserver REQUIRED IMPORTED_TARGET libvncserver)
 
 add_executable(aten-proxy
@@ -20,4 +23,5 @@ add_executable(aten-proxy
 target_link_libraries(aten-proxy
   PkgConfig::libvncserver
   Libev::Libev
+  Threads::Threads
 )
