@@ -367,10 +367,16 @@ void AtenServer::handleFrameUpdate() {
 				}
 				break;
 			case 1:  // entire frame
-				const char *data = mConnection->readBytes(totalLen - 10);
-				copyPixels(fb, data, (totalLen - 10) >> 1);
+				{
+					const char *data = mConnection->readBytes(totalLen - 10);
+					copyPixels(fb, data, (totalLen - 10) >> 1);
 
-				sendRFBUpdate(makeEvent<EV(RFBUpdate, AddDirtyRect)>(0, 0, mFBWidth, mFBHeight));
+					sendRFBUpdate(makeEvent<EV(RFBUpdate, AddDirtyRect)>(0, 0, mFBWidth, mFBHeight));
+				}
+				break;
+			default:
+				printf("Ignoring unknown update type: %x\n", type);
+				(void) mConnection->readBytes(totalLen - 10);
 				break;
 			}
 		}
