@@ -450,6 +450,7 @@ AtenServer::AtenServer(int *argc, char **argv) {
 	mFrameBuffer = reinterpret_cast<char*>(malloc(mFBWidth * mFBHeight * 2));
 	memset(mFrameBuffer, 0, mFBWidth * mFBHeight * 2);
 
+	mRFB->desktopName = strdup("aten-proxy");
 	mRFB->frameBuffer = mFrameBuffer;
 	mRFB->kbdAddEvent = [](rfbBool down, rfbKeySym keySym, rfbClientPtr cl){
 		AtenServer *self = reinterpret_cast<AtenServer*>(
@@ -544,8 +545,10 @@ void AtenServer::run() {
 
 	std::thread{ev_run, loop, 0}.detach();
 
-	const char *username = "testuser";
-	const char *password = "testpass";
+	const char *host = getenv("ATEN_PROXY_HOST");
+	const char *port = getenv("ATEN_PROXY_PORT");
+	const char *username = getenv("ATEN_PROXY_USERNAME");
+	const char *password = getenv("ATEN_PROXY_PASSWORD");
 	while (true) {
 		try {
 			struct {
@@ -556,11 +559,11 @@ void AtenServer::run() {
 				printf("username and password must be 0-23 characters each\n");
 				abort();
 			}
-			strncpy(auth.username, "testuser", sizeof(auth.username));
-			strncpy(auth.password, "testpass", sizeof(auth.password));
+			strncpy(auth.username, username, sizeof(auth.username));
+			strncpy(auth.password, password, sizeof(auth.password));
 
 			mConnection = std::unique_ptr<Connection>{
-				new Connection("localhost", "5901")};
+				new Connection(host, port)};
 
 			fprintf(stderr, "Connected\n");
 
